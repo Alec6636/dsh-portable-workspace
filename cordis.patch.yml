@@ -1,0 +1,6 @@
+# Mounts the portable-workspace bundle. `name` must stay equal to the package
+# name in package.json: a mismatch keeps the whole row from loading.
+- insert:
+    - id: portable-workspace
+      name: dsh-portable-workspace
+      config: {}

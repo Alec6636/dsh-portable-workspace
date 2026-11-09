@@ -1,0 +1,59 @@
+{
+  "name": "dsh-portable-workspace",
+  "version": "0.1.4",
+  "type": "module",
+  "description": "移动工作区：把 DSH 会话、插件、工程与交付完整运行在移动硬盘 / U 盘上。",
+  "icon": "icon.svg",
+  "author": "AlecWong",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "portable-workspace",
+    "removable-drive",
+    "usb",
+    "移动工作区",
+    "plugin"
+  ],
+  "homepage": "https://pwp.rooj.top/",
+  "bugs": {
+    "url": "https://pwp.rooj.top/"
+  },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "scripts/*.mjs",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.1-rc.5"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}
