@@ -16,6 +16,10 @@
     "plugin"
   ],
   "homepage": "https://pwp.rooj.top/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alec6636/dsh-portable-workspace.git"
+  },
   "bugs": {
     "url": "https://pwp.rooj.top/"
   },

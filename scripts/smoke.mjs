@@ -35,7 +35,7 @@ line('scan hits', found.map((entry) => `${entry.root}${entry.external ? ' (exter
 // 3. create workspaces
 const plain = await createWorkspace(root, { name: '甲方案', password: '' })
 line('created (no password)', plain.manifest.id)
-const locked = await createWorkspace(root, { name: '乙方案', password: 'hunter2' })
+const locked = await createWorkspace(root, { name: '乙方案', password: 'PLACEHOLDER_ONLY_NOT_A_SECRET' })
 line('created (password)', locked.manifest.id)
 
 let duplicate = 'none'
@@ -48,7 +48,7 @@ line('duplicate rejected', duplicate)
 
 // 4. password round-trip
 line('verify empty ok', verifyPassword(plain.manifest.password, ''))
-line('verify locked ok', verifyPassword(locked.manifest.password, 'hunter2'))
+line('verify locked ok', verifyPassword(locked.manifest.password, 'PLACEHOLDER_ONLY_NOT_A_SECRET'))
 line('verify locked bad', verifyPassword(locked.manifest.password, 'wrong'))
 
 // 5. listing + paths
