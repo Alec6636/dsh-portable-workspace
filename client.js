@@ -314,7 +314,7 @@ window.__ModuleLoader__.load({
       'panel.pluginAdded': 'Plugin added:',
       'panel.deletePhrase': 'Type the phrase below to confirm deletion',
       'panel.deletePhraseLabel': 'Confirmation phrase',
-      'panel.deletePhraseHint': '我已知晓删除该工作区，无法恢复！',
+      'panel.deletePhraseHint': 'I understand this workspace will be permanently deleted',
       'panel.deletePasswordLabel': 'Workspace password',
       'panel.deletePasswordPlaceholder': 'Enter it if set, otherwise leave empty',
       'panel.deleteNow': 'Delete now',
@@ -357,7 +357,7 @@ window.__ModuleLoader__.load({
       'panel.restoreTo': 'Restore into',
       'panel.restorePhrase': 'Type the phrase below to confirm restore',
       'panel.restorePhraseLabel': 'Confirmation phrase',
-      'panel.restorePhraseHint': '我已知晓恢复操作将覆盖原有移动工作区，请谨慎操作！',
+      'panel.restorePhraseHint': 'I understand restoring will overwrite this workspace',
       'panel.restorePasswordLabel': 'Password of the overwritten workspace',
       'panel.restorePasswordPlaceholder': 'Enter it if set, otherwise leave empty',
       'panel.restoreNow': 'Restore now',
@@ -493,13 +493,119 @@ window.__ModuleLoader__.load({
     /** A short, localizable error description for a thrown request failure. */
     function errorMessageOf(error, t) {
       if (error !== null && typeof error === 'object' && typeof error.message === 'string' && error.message.trim() !== '') {
-        return error.message.trim()
+        return serverText(error.message.trim(), t)
       }
       if (error !== null && typeof error === 'object' && typeof error.httpStatus === 'number') {
         return t('error.http', { status: error.httpStatus })
       }
       if (error instanceof TypeError) return t('error.network')
       return t('error.unknown')
+    }
+
+
+    /** True when the DSH UI is in English (the bound namespace translator). */
+    function isEnglishUI(t) {
+      try { return t('panel.title') === 'Portable Workspace' } catch { return false }
+    }
+
+    /**
+     * The Host emits Chinese for thrown errors, compatibility reasons, plugin
+     * hints and offline reasons: it has no UI-locale context. Translate those
+     * here, at the single client boundary, so every dialog / notice is fully
+     * English when the DSH UI is English. Chinese UI keeps the originals.
+     * Values are either exact strings or [RegExp, replacement] pairs; the
+     * replacement may use $1..$n captures. Keep this list in sync with the
+     * Chinese literals in index.js and lib/*.js (see the i18n coverage test).
+     */
+    const HOST_TEXT_EN = [
+      // ---- password / destructive confirmations (failPassword) ----
+      ['工作区密码不正确。', 'Incorrect workspace password.'],
+      ['来源工作区密码不正确。', 'Incorrect source workspace password.'],
+      ['目标工作区密码不正确。', 'Incorrect target workspace password.'],
+      ['请输入确认文字后再删除。', 'Type the confirmation phrase before deleting.'],
+      ['请输入确认文字后再恢复。', 'Type the confirmation phrase before restoring.'],
+      ['两次输入的新密码不一致。', 'The two new passwords do not match.'],
+      ['该工作区没有设置恢复密钥。', 'This workspace has no recovery key set.'],
+      ['恢复密钥不正确。', 'Incorrect recovery key.'],
+      ['找不到所选备份。', 'The selected backup was not found.'],
+      ['来源和目标不能是同一个工作区。', 'Source and target cannot be the same workspace.'],
+      ['请至少选择一个会话。', 'Select at least one session.'],
+      ['缺少来源/目标盘或工作区 id。', 'Missing source/target drive or workspace id.'],
+      // ---- launch / prepareOpen messages ----
+      ['没有找到本机的 DeepSeek Harness 安装目录，无法启动便携实例。', 'The local DeepSeek Harness installation was not found, so the portable instance cannot start.'],
+      ['没有找到本机的 DeepSeek Harness 安装目录。', 'The local DeepSeek Harness installation was not found.'],
+      ['这个工作区已经在运行。', 'This workspace is already running.'],
+      ['还缺少必需的插件，请先安装。', 'Required plugins are missing. Install them first.'],
+      ['有插件与本机 DSH 版本不兼容，请查看处理方案。', 'Some plugins are incompatible with the local DSH version. See the suggestions.'],
+      ['有可选插件未安装。', 'Some optional plugins are not installed.'],
+      ['便携实例已启动，还在等待它就绪。', 'The portable instance has started; waiting for it to become ready.'],
+      // ---- request parsing / dispatch ----
+      ['请求体过大', 'Request body too large'],
+      ['请求体必须是 JSON 对象', 'Request body must be a JSON object'],
+      ['请求体不是合法 JSON', 'Request body is not valid JSON'],
+      // ---- offline reasons ----
+      ['移动盘未连接', 'Drive not connected'],
+      ['无法访问', 'Inaccessible'],
+      [/^离线：(.+)$/, 'Offline: $1'],
+      // ---- manifest defaults / misc ----
+      ['未命名工作区', 'Untitled workspace'],
+      ['本机缺少 tar，无法解开压缩包备份。', 'tar is missing on this computer, so the zipped backup cannot be extracted.'],
+      ['没有可用的便携 profile 目录。', 'No portable profile directory is available.'],
+      ['这台电脑上没有找到随 DSH 一起安装的 pnpm，无法自动安装插件。', 'pnpm bundled with DSH was not found on this computer, so plugins cannot be installed automatically.'],
+      // ---- lib/compatibility.js reasons + advice ----
+      [/^插件要求 DSH (.+)，但无法读取本机 DSH 版本$/, 'The plugin requires DSH $1, but the local DSH version could not be read'],
+      [/^本机 DSH (.+?) 不满足插件要求 (.+)$/, 'Local DSH $1 does not meet the plugin requirement $2'],
+      [/^依赖 (.+?) 版本 (.+?) 不满足 (.+)$/, 'Dependency $1 version $2 does not satisfy $3'],
+      ['建议升级本机 DeepSeek Harness 到该插件支持的版本，或在工作区设置里改用兼容版本；该插件为可选，也可以跳过不安装。', 'Upgrade the local DeepSeek Harness to a version the plugin supports, or switch to a compatible version in workspace settings; this plugin is optional and can be skipped.'],
+      ['建议升级本机 DeepSeek Harness 到该插件支持的版本，或在工作区设置里改用兼容版本。', 'Upgrade the local DeepSeek Harness to a version the plugin supports, or switch to a compatible version in workspace settings.'],
+      // The compatibility advice is a template: its tail may be an optional-plugin
+      // clause or an interpolated value. Scrub the invariant prefix too so a
+      // synthesized / future variant never leaks Chinese into the dialog.
+      ['建议升级本机 DeepSeek Harness 到该插件支持的版本，或在工作区设置里改用兼容版本', 'Upgrade the local DeepSeek Harness to a version the plugin supports, or switch to a compatible version in workspace settings'],
+      ['；该插件为可选，也可以跳过不安装', '; this plugin is optional and can be skipped'],
+      // ---- lib/names.js hints / errors ----
+      [/^已把市场短名 (.+?) 解析为完整包名 (.+?)。$/, 'Resolved the market short name $1 to the full package name $2.'],
+      [/^最新版 (.+?) 要求 DSH (.+?)，本机 (.+?) 不满足，已改用兼容版 (.+?)。$/, 'Latest version $1 requires DSH $2, which the local $3 does not meet; using compatible version $4 instead.'],
+      [/^最新版 (.+?) 要求 DSH (.+?)，本机 (.+?) 不满足，且没有找到兼容的旧版本。$/, 'Latest version $1 requires DSH $2, which the local $3 does not meet, and no compatible older version was found.'],
+      [/^npm 上没有这个包名。.*$/, 'This package name does not exist on npm. The market shows short names; the real package name usually has an author prefix (for example dsh-web-all is @linxin666/dsh-web-all, modlens is @liustack/modlens). Enter the full package name.'],
+      // ---- templated errors from index.js / lib/workspace.js ----
+      [/^找不到工作区：(.+)$/, 'Workspace not found: $1'],
+      [/^缺少字段：(.+)$/, 'Missing field: $1'],
+      [/^没有这个接口：(.+)$/, 'Unknown endpoint: $1'],
+      [/^本盘已有同名工作区：(.+)$/, 'A workspace with this name already exists on this drive: $1'],
+      [/^目标盘已有同 id 的工作区：(.+)$/, 'A workspace with the same id already exists on the target drive: $1'],
+      ['源盘和目标盘相同，无需迁移', 'Source and target drives are the same; nothing to migrate'],
+      [/^找不到移动工作区根目录：(.+)$/, 'Portable workspace root not found: $1'],
+    ]
+
+    /** Exact-string rules, longest first, so a longer phrase is not mangled
+     *  by a shorter one contained inside it. */
+    const HOST_TEXT_EXACT = HOST_TEXT_EN.filter((r) => typeof r[0] === 'string')
+      .slice().sort((a, b) => b[0].length - a[0].length)
+
+    function translateEmbedded(value) {
+      let out = value
+      for (const [from, to] of HOST_TEXT_EXACT) {
+        if (out.includes(from)) out = out.split(from).join(to)
+      }
+      return out
+    }
+
+    /** Translate one Host-emitted Chinese string when the UI is English.
+     *  A templated Host string can contain another known Chinese phrase in
+     *  its captured tail (e.g. "离线：移动盘未连接"), so after a regex hit we
+     *  scrub any remaining exact phrases too, leaving no UI text in Chinese. */
+    function serverText(text, t) {
+      const str = String(text ?? '')
+      if (str === '' || !isEnglishUI(t)) return str
+      for (const rule of HOST_TEXT_EN) {
+        if (typeof rule[0] === 'string') {
+          if (str === rule[0]) return rule[1]
+        } else if (rule[0].test(str)) {
+          return translateEmbedded(str.replace(rule[0], rule[1]))
+        }
+      }
+      return translateEmbedded(str)
     }
 
     /** A failure carrying either a Host payload or a transport status. */
@@ -961,7 +1067,7 @@ window.__ModuleLoader__.load({
           if (result === undefined) return
           if (result.ok !== true) {
             if (result.stage === 'password') {
-              setDialog({ kind: 'password', volume, workspace, message: result.message ?? '', hint: workspace.passwordHint ?? '' })
+              setDialog({ kind: 'password', volume, workspace, message: serverText(result.message ?? '', tRef.current), hint: workspace.passwordHint ?? '' })
               return
             }
             if (result.stage === 'plugins') {
@@ -976,13 +1082,13 @@ window.__ModuleLoader__.load({
               })
               return
             }
-            setError(result.message ?? tRef.current('error.unknown'))
+            setError(serverText(result.message ?? '', tRef.current) || tRef.current('error.unknown'))
             return
           }
           if (result.stage === 'launched' || result.stage === 'running') {
             setDialog({ kind: 'launched', volume, workspace, url: result.url ?? '', password: password ?? '' })
           } else {
-            setNotice(result.message ?? '')
+            setNotice(serverText(result.message ?? '', tRef.current))
             setDialog({ kind: 'launched', volume, workspace, url: result.url ?? '', pending: true, password: password ?? '' })
           }
           await load(false)
@@ -1076,12 +1182,12 @@ window.__ModuleLoader__.load({
           )
           if (result !== undefined && result.ok === true) {
             const detail = Array.isArray(result.hints) && result.hints.length > 0
-              ? `（${result.hints.join(' ')}）`
+              ? ` (${result.hints.map((x) => serverText(x, tRef.current)).join(' ')})`
               : ''
             setNotice(`${tRef.current('panel.pluginAdded')} ${result.name ?? spec}${detail}`)
             await load(false)
           } else if (result !== undefined && result.ok === false) {
-            const tail = String(result.output ?? '').split('\n').filter(Boolean).slice(-3).join(' ')
+            const tail = serverText(String(result.output ?? '').split('\n').filter(Boolean).slice(-3).join(' '), tRef.current)
             setError(tail || tRef.current('error.unknown'))
           }
           return result
@@ -1319,7 +1425,7 @@ window.__ModuleLoader__.load({
                   },
                   h(Badge, { tone: 'error' }, t('panel.offline')),
                   h('span', { style: { fontFamily: T.mono, fontSize: 12 } }, entry.root),
-                  h('span', { style: { marginLeft: 'auto', fontSize: 11, color: T.labelTertiary } }, entry.reason),
+                  h('span', { style: { marginLeft: 'auto', fontSize: 11, color: T.labelTertiary } }, serverText(entry.reason, t)),
                 ),
               ),
             )
@@ -1527,7 +1633,7 @@ window.__ModuleLoader__.load({
                       await openWorkspace(current.volume, current.workspace, current.password ?? '')
                       return
                     }
-                    setError((result.output ?? '').split('\n').slice(-3).join(' '))
+                    setError(serverText((result.output ?? '').split('\n').slice(-3).join(' '), t))
                   },
                 })
               : dialog.kind === 'launched'
@@ -1829,10 +1935,10 @@ window.__ModuleLoader__.load({
                   { key: item.name, style: { fontSize: 12, marginTop: 8, paddingLeft: 8, borderLeft: `2px solid ${T.warn}` } },
                   h('div', { style: { fontFamily: T.mono, color: T.labelPrimary } }, item.name),
                   (item.reasons ?? []).map((reason, i) =>
-                    h('div', { key: i, style: { color: T.labelSecondary, marginTop: 2 } }, reason),
+                    h('div', { key: i, style: { color: T.labelSecondary, marginTop: 2 } }, serverText(reason, t)),
                   ),
                   typeof item.advice === 'string' && item.advice !== ''
-                    ? h('div', { style: { color: T.labelPrimary, marginTop: 4 } }, `${t('panel.conflictAdvice')}：${item.advice}`)
+                    ? h('div', { style: { color: T.labelPrimary, marginTop: 4 } }, `${t('panel.conflictAdvice')}: ${serverText(item.advice, t)}`)
                     : null,
                 ),
               ),
@@ -2059,7 +2165,7 @@ window.__ModuleLoader__.load({
      * again, so typing the phrase is mandatory even via a raw HTTP call.
      */
     function DeleteDialog({ t, workspace, busy, onClose, onSubmit }) {
-      const phrase = '我已知晓删除该工作区，无法恢复！'
+      const phrase = t('panel.deletePhraseHint')
       const [typed, setTyped] = React.useState('')
       const [password, setPassword] = React.useState('')
       const [submitting, setSubmitting] = React.useState(false)
@@ -2444,7 +2550,7 @@ window.__ModuleLoader__.load({
 
     /** Backup list, retention settings, manual backup and guarded restore (0.1.3). */
     function BackupDialog({ t, volume, workspace, volumes, onClose, onDone }) {
-      const RESTORE_PHRASE = '我已知晓恢复操作将覆盖原有移动工作区，请谨慎操作！'
+      const RESTORE_PHRASE = t('panel.restorePhraseHint')
       const [max, setMax] = React.useState('5')
       const [auto, setAuto] = React.useState(false)
       const [backups, setBackups] = React.useState([])

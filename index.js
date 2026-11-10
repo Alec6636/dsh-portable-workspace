@@ -13,8 +13,8 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import {
-  DELETE_CONFIRM_PHRASE,
-  RESTORE_CONFIRM_PHRASE,
+  DELETE_CONFIRM_PHRASES,
+  RESTORE_CONFIRM_PHRASES,
   MAX_BODY_BYTES,
   NS,
   PROFILE_NAME,
@@ -1108,7 +1108,7 @@ async function dispatch(ctx, settings, connection, req, res) {
       const id = requireField(body, 'id')
       // Destructive actions must be typed out and password-gated. Checking on
       // the Host side also protects direct route calls that bypass the dialog.
-      if (String(body.confirmPhrase ?? '') !== DELETE_CONFIRM_PHRASE) {
+      if (!DELETE_CONFIRM_PHRASES.includes(String(body.confirmPhrase ?? ''))) {
         failPassword('请输入确认文字后再删除。')
       }
       const found = await readWorkspace(root, id)
@@ -1305,7 +1305,7 @@ async function dispatch(ctx, settings, connection, req, res) {
     case '/restore': {
       // Destructive: exact acknowledgement phrase + password of the overwritten
       // workspace (checked on the Host so a raw route call cannot bypass it).
-      if (String(body.confirmPhrase ?? '') !== RESTORE_CONFIRM_PHRASE) {
+      if (!RESTORE_CONFIRM_PHRASES.includes(String(body.confirmPhrase ?? ''))) {
         failPassword('请输入确认文字后再恢复。')
       }
       const root = requireField(body, 'root')

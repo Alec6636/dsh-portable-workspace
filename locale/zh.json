@@ -103,6 +103,7 @@
     "deletePhrase": "请输入下面的文字确认删除",
     "deletePhraseLabel": "确认文字",
     "deletePhraseHint": "我已知晓删除该工作区，无法恢复！",
+    "restorePhraseHint": "我已知晓恢复操作将覆盖原有移动工作区，请谨慎操作！",
     "deletePasswordLabel": "工作区密码",
     "deletePasswordPlaceholder": "有密码则输入，无密码留空",
     "deleteNow": "确认删除",
