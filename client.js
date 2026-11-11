@@ -207,6 +207,15 @@ window.__ModuleLoader__.load({
       'panel.sessionVerifyBody': '该工作区设有密码。为保护会话隐私，请先验证密码，再进入迁移会话页面。',
       'panel.sessionVerifyGo': '验证并进入',
       'panel.sessionNoTitle': '（无主题会话）',
+      'panel.declaredPlugins': '依赖插件',
+      'panel.declaredExpand': '展开',
+      'panel.declaredCollapse': '收起',
+      'panel.declaredRemove': '从清单移除',
+      'panel.declaredRemoveTitle': '从清单移除插件',
+      'panel.declaredRemoveBody': '移除后，这台电脑打开该工作区将不再提示安装此插件。此操作只修改依赖清单，不卸载已安装的插件。',
+      'panel.declaredRemoveGo': '移除',
+      'panel.declaredRemoved': '已从依赖清单移除',
+      'panel.declaredRemoveMissing': '从清单移除并跳过',
       'error.network': '无法连接 DSH 主机，请确认页面与主机的连接正常后重试。',
       'error.http': '请求失败（HTTP {status}）。',
       'error.unknown': '发生未知错误，请重试。',
@@ -385,6 +394,15 @@ window.__ModuleLoader__.load({
       'panel.sessionVerifyBody': 'This workspace is password-protected. To protect session privacy, verify the password before entering the session migration page.',
       'panel.sessionVerifyGo': 'Verify & continue',
       'panel.sessionNoTitle': '(untitled session)',
+      'panel.declaredPlugins': 'Declared plugins',
+      'panel.declaredExpand': 'Expand',
+      'panel.declaredCollapse': 'Collapse',
+      'panel.declaredRemove': 'Remove from list',
+      'panel.declaredRemoveTitle': 'Remove declared plugin',
+      'panel.declaredRemoveBody': 'After removal, this computer will no longer prompt to install this plugin when opening the workspace. This only edits the declared list; it does not uninstall an installed plugin.',
+      'panel.declaredRemoveGo': 'Remove',
+      'panel.declaredRemoved': 'Removed from the declared list',
+      'panel.declaredRemoveMissing': 'Remove from list & skip',
       'error.network': 'Cannot reach the DSH host. Check the page connection and try again.',
       'error.http': 'Request failed (HTTP {status}).',
       'error.unknown': 'Something went wrong. Please try again.',
@@ -1384,16 +1402,12 @@ window.__ModuleLoader__.load({
                       { style: { fontSize: 11, color: T.labelTertiary, fontFamily: T.mono, wordBreak: 'break-all' } },
                       `${t('panel.projectDir')}: ${workspace.projectDir}`,
                     ),
-                    workspace.plugins !== undefined && workspace.plugins.length > 0
-                      ? h(
-                          'div',
-                          { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-                          workspace.plugins.map((entry) =>
-                            h(Badge, { key: entry.name, tone: entry.optional ? 'neutral' : 'neutral' },
-                              entry.optional ? `${entry.name} (${t('panel.optional')})` : entry.name),
-                          ),
-                        )
-                      : null,
+                    h(DeclaredPlugins, {
+                      key: 'declared',
+                      t,
+                      plugins: workspace.plugins,
+                      onRemove: (entry) => setDialog({ kind: 'removeDeclared', volume, workspace, entry }),
+                    }),
                   ),
                 ),
               ),
@@ -1598,6 +1612,19 @@ window.__ModuleLoader__.load({
                   await openWorkspace(current.volume, current.workspace, password)
                 },
               })
+            : dialog.kind === 'removeDeclared'
+              ? h(RemoveDeclaredDialog, {
+                  t,
+                  volume: dialog.volume,
+                  workspace: dialog.workspace,
+                  entry: dialog.entry,
+                  onClose: () => setDialog(null),
+                  onDone: async () => {
+                    setDialog(null)
+                    setNotice(t('panel.declaredRemoved'))
+                    await load(false)
+                  },
+                })
             : dialog.kind === 'plugins'
               ? h(PluginsDialog, {
                   t,
@@ -1612,6 +1639,27 @@ window.__ModuleLoader__.load({
                   onSkip: async () => {
                     const current = dialog
                     setDialog(null)
+                    await openWorkspace(current.volume, current.workspace, current.password ?? '', true)
+                  },
+                  onRemoveMissing: async () => {
+                    const current = dialog
+                    const gapNames = new Set([...(current.missing ?? []), ...(current.optional ?? [])].map((x) => x.name))
+                    const remaining = (current.workspace.plugins ?? []).filter((p) => !gapNames.has(p.name))
+                    const result = await run('install', () =>
+                      request('/update', {
+                        root: current.volume.root,
+                        id: current.workspace.id,
+                        password: current.password ?? '',
+                        plugins: remaining,
+                      }),
+                    )
+                    if (result === undefined) return
+                    if (result.ok !== true) {
+                      setError(serverText(String(result.message ?? '').split('\n').slice(-3).join(' '), t))
+                      return
+                    }
+                    setDialog(null)
+                    setNotice(t('panel.declaredRemoved'))
                     await openWorkspace(current.volume, current.workspace, current.password ?? '', true)
                   },
                   onInstall: async (includeOptional) => {
@@ -1882,7 +1930,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Missing-plugin report with the one-click install. */
-    function PluginsDialog({ t, workspace, missing, optional, conflicts, busy, onClose, onInstall, onSkip }) {
+    function PluginsDialog({ t, workspace, missing, optional, conflicts, busy, onClose, onInstall, onSkip, onRemoveMissing }) {
       const conflictList = Array.isArray(conflicts) ? conflicts : []
       const hasGaps = missing.length > 0 || optional.length > 0
       return h(
@@ -1892,6 +1940,9 @@ window.__ModuleLoader__.load({
           onClose,
           width: 460,
           footer: [
+            hasGaps && typeof onRemoveMissing === 'function'
+              ? h(Button, { key: 'removeMissing', onClick: () => void onRemoveMissing(), disabled: busy }, t('panel.declaredRemoveMissing'))
+              : null,
             h(Button, { key: 'skip', onClick: () => void onSkip(), disabled: busy }, busy ? t('panel.installing') : t('panel.skip')),
             optional.length === 0
               ? null
@@ -2402,6 +2453,98 @@ window.__ModuleLoader__.load({
           : null,
       )
     }
+    /** Collapsed-by-default list of declared plugins for one workspace card.
+     *  Each card keeps its own open/closed state; expanding reveals the pills
+     *  and a small "x" that asks the Host to drop that declared entry. */
+    function DeclaredPlugins({ t, plugins, onRemove }) {
+      const [open, setOpen] = React.useState(false)
+      const list = Array.isArray(plugins) ? plugins : []
+      if (list.length === 0) return null
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('span', { style: { fontSize: 11, color: T.labelTertiary } }, `${t('panel.declaredPlugins')} (${list.length})`),
+          h(Button, { onClick: () => setOpen(!open) }, open ? t('panel.declaredCollapse') : t('panel.declaredExpand')),
+        ),
+        open
+          ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+              list.map((entry) =>
+                h('span', { key: entry.name, style: { display: 'inline-flex', alignItems: 'center', gap: 2 } },
+                  h(Badge, { tone: 'neutral' }, entry.optional ? `${entry.name} (${t('panel.optional')})` : entry.name),
+                  h('button', {
+                    type: 'button',
+                    title: t('panel.declaredRemove'),
+                    'aria-label': `${t('panel.declaredRemove')} ${entry.name}`,
+                    onClick: () => onRemove(entry),
+                    style: { border: 'none', background: 'transparent', color: T.labelTertiary, cursor: 'pointer', padding: '0 3px', fontSize: 13, lineHeight: 1 },
+                  }, '×'),
+                ),
+              ),
+            )
+          : null,
+      )
+    }
+
+    /** Remove one declared plugin entry. The Host guards /update with the
+     *  workspace password, so a protected workspace must supply it here. */
+    function RemoveDeclaredDialog({ t, volume, workspace, entry, onClose, onDone }) {
+      const [password, setPassword] = React.useState('')
+      const [err, setErr] = React.useState('')
+      const [submitting, setSubmitting] = React.useState(false)
+      const submit = async () => {
+        if (submitting) return
+        setSubmitting(true)
+        setErr('')
+        try {
+          const remaining = (workspace.plugins ?? []).filter((p) => p.name !== entry.name)
+          const result = await request('/update', {
+            root: volume.root,
+            id: workspace.id,
+            password,
+            plugins: remaining,
+          })
+          if (result && result.ok === true) {
+            onDone()
+            return
+          }
+          setErr(serverText(String(result?.message ?? '').split('\n').slice(-3).join(' '), t) || t('error.unknown'))
+        } catch (failure) {
+          setErr(errorMessageOf(failure, t))
+        } finally {
+          setSubmitting(false)
+        }
+      }
+      return h(
+        Modal,
+        {
+          title: `${t('panel.declaredRemoveTitle')} · ${workspace.name}`,
+          onClose,
+          footer: [
+            h(Button, { key: 'cancel', onClick: onClose }, t('panel.cancel')),
+            h(Button, {
+              key: 'ok', kind: 'danger', onClick: () => void submit(), disabled: submitting,
+            }, submitting ? t('panel.working') : t('panel.declaredRemoveGo')),
+          ],
+        },
+        h('div', { style: { fontSize: 12, color: T.labelSecondary, lineHeight: '20px' } }, t('panel.declaredRemoveBody')),
+        h('div', { style: { fontSize: 12, fontFamily: T.mono, color: T.labelPrimary, wordBreak: 'break-all' } }, `${entry.name}${entry.version ? `@${entry.version}` : ''}`),
+        workspace.passwordProtected === true
+          ? h(Field, { label: t('panel.workspacePassword') }, h(PasswordField, {
+              t,
+              value: password,
+              onChange: setPassword,
+              placeholder: t('panel.workspacePasswordPlaceholder'),
+              autoFocus: true,
+              onEnter: () => void submit(),
+            }))
+          : null,
+        err === '' ? null : h('div', { style: { fontSize: 12, color: T.error } }, err),
+      )
+    }
+
     // #endregion
 
     /**
