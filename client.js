@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
       'panel.running': '运行中',
       'panel.stopped': '未运行',
       'panel.offline': '脱机',
-      'panel.locked': '已加密',
+      'panel.locked': '有密码',
       'panel.unlocked': '无密码',
       'panel.migrate': '迁移',
       'panel.delete': '删除',

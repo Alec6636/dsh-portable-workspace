@@ -38,7 +38,7 @@
     "running": "运行中",
     "stopped": "未运行",
     "offline": "脱机",
-    "locked": "已加密",
+    "locked": "有密码",
     "unlocked": "无密码",
     "migrate": "迁移",
     "delete": "删除",
