@@ -6,57 +6,7 @@
 
 **0.1.6 新增**：依赖插件列表默认收起，可点「展开 / 收起」；已卸载的插件可从清单逐条移除（有密码的工作区需验证密码），移除后打开工作区不再反复提示「缺少插件」。
 
-## 安装
-
-在每台需要读取移动工作区的电脑上，把本目录安装进当前 DSH profile：
-
-```
-plugin_manager  install_bundle  <本目录绝对路径>
-```
-
-安装后侧栏「全局面板」多出「移动工作区」入口。修改 JS 后需 `set_bundle false → true` 重载（或重启 DSH）。
-
-> 本插件自身是**按电脑安装**的（这是需求明确允许的前提）；移动盘上不需要预装它——打开工作区时，便携实例由本机 DSH 的 CLI 启动。
-> 安装用的是 `link:` 软链接（本机 profile 只记一条指向该目录的路径），**所以这个目录不要移动或删除**；换位置需重新 `install_bundle`。
-> 完整的分步截图教程见 [docs/移动工作区-图文教程.html](docs/移动工作区-图文教程.html)（单文件、图片内嵌，双击即可打开）。
-
-## 卸载
-
-卸载是**按电脑**进行的，只移除本机 profile 里那条 `link:` 软链接，**不会删除移动盘上的任何数据**；换一台仍装了插件的电脑插上盘照常打开。
-
-1. 先在「移动工作区」面板点「关闭全部便携实例」（或逐个「登出」），避免残留 detached 进程继续占用安装文件。
-2. 停用并移除 bundle（顺序不要反）：
-   ```
-   plugin_manager  set_bundle    dsh-portable-workspace  enabled=false
-   plugin_manager  remove_bundle  dsh-portable-workspace
-   ```
-   `enabled=false` 会触发插件的 dispose 清理钩子，`remove_bundle` 再从 dependencies / `dsh.profile.bundles` 删除该记录；也可在「插件」面板里停用 → 移除。
-3. 刷新/重启 DSH，侧栏「移动工作区」入口消失即完成。
-4. （可选）删除本机桥梁 `~/.dsh/portable-workspace/roots.json` 以忘掉记住的卷（只记根路径，无工作区数据）；再删除解压出来的插件目录。
-
-> 盘上 `Portable-DSH\` 全部保留。卸载 ≠ 删除工作区；要销毁某个工作区请用面板「删除」（固定文字 + 密码双确认），或卸载后手动删盘上对应目录。用「市场 Discover / 按包名」安装的卸载方式相同，执行第 2 步即可。完整图文见[教程第九节](docs/移动工作区-图文教程.html)。
-
-## 盘上目录约定
-
-主目录名为 `Portable-DSH`（0.1.1 起）；0.1.0 及更早初始化的盘叫 `Protable-DSH`，插件两种拼写都识别，旧盘不用改名：
-
-```
-<盘>:\Portable-DSH\
-├─ .dsh-portable.json         根标记（kind/rootId/format），盘符无关识别的唯一桥梁
-├─ Portable-Workspaces\      各工作区数据
-│  └─ <ws-id>\
-│     ├─ workspace.json       清单：名称、密码 scrypt、插件声明、profile、origin
-│     ├─ sessions\            会话日志（.jsonl.zstd）
-│     ├─ storages\            存储域 / 会话投影缓存 / workspace registry
-│     ├─ logs\                launch.log、plugins.log
-│     ├─ launch\              cordis.patch.yml、start-portable.cmd、runtime.json
-│     └─ ...
-├─ Projects\<ws-id>\         工程文件与交付（默认工作目录也指向这里）
-└─ support\
-   └─ home\                  便携 DSH_HOME：profiles/portable/、.credentials.yaml 等
-```
-
-面板里的「初始化这块盘」创建根标记与三个目录；「新建移动工作区」创建工作区，密码可留空。
+**0.1.7 新增**：迁移会话时把工程文件、交付物与附件一起搬走，并把会话正文里的旧绝对路径改写为新目录（换盘符同样有效），迁移完成后会提示复制了多少文件、改写了多少处路径。
 
 ## 工作原理（为什么 100% 落在盘上）
 
@@ -116,57 +66,4 @@ DeepSeek Harness.exe --expose-internals <cli.js> portable \
 
 ## DeepSeek Harness 升级时，插件如何同步更新
 
-结论：**插件不会随 DSH 升级「自动更新」，但也不会被升级删掉，通常升级后照常可用**。分两类看：
-
-| 对象 | 存在哪里 | DSH 升级时 |
-| --- | --- | --- |
-| 插件本体 `dsh-portable-workspace` | 本机目录，以 `link:` 挂在当前 profile 的 dependencies / bundles 里 | profile 配置持久，升级不会动它；代码在那个目录，**原地保留** |
-| 便携实例的基础 bundles（`@deepseek-ai/dsh-base` 等） | 本机 DSH 安装目录的 `app.asar` 内 | 随 DSH 升级自动更新 —— 便携实例每次启动都读**本机当前版本**的 CLI 与 asar |
-| 工作区数据（会话 / 工程 / 日志 / 便携 home） | 移动盘 | 完全不受影响，一直在盘上 |
-| 工作区依赖的第三方插件 | 移动盘上的便携 profile | 不随 DSH 升级变，版本由你自己添加时决定 |
-
-- **★ 升级前先点「关闭全部便携实例」**：这一步会按命令行扫描并终止所有 `detached` 便携 CLI 及其 recovery 子进程、清空运行态，并**清除本机 `~/.dsh/portable-workspace/roots.json` 根路径索引**（升级完成后点「重新扫描」即可从盘上 `.dsh-portable.json` 标记文件恢复，索引只记路径、无工作区数据）。它释放便携实例对 `DeepSeek Harness.exe` / `app.asar` 的占用，也让本插件在升级窗口内不再持有「已拔掉的离线盘」路径去做磁盘探测。工具 `stop-all` 可脚本化完成这一步。
-- **★ 常规升级仍失败时（重要，实测结论）**：弹窗「未能安全停止任务，更新尚未安装，请稍后重试。」及技术详情 `graceful deadline exceeded true / shutdown acknowledged true`，根因在 DSH 升级器自身，**不是文件被锁、也不是某一个插件**：升级器要求 desktop host 在 **10 秒内真正退出进程**（并发过 IPC `shutdown-complete`）；host 里只要有关不干净的子进程、或关闭钩子把所有 `ctx.effect` disposer 用 `await Promise.allSettled` 等齐拖过 10 秒，主壳就 `SIGTERM` 强杀并抛 `DesktopHostUncleanExitError` → `preparationFailure="stop-failed"` → 拒绝安装 → `restoreHost` 重新拉起 host（端口反复变化、「重新连接中...」）。`shutdown acknowledged true` 恰恰说明 host 已完成关闭流程、只是进程没按时退出。删 playwright、禁用 MCP 连接器、关便携实例都动不了这条计时，所以仍会失败。本插件此前在关闭钩子里会枚举进程、探测 24 个盘符、读取 `roots.json` 记住的**已拔掉移动盘**上的标记文件（无超时），会占用那 10 秒窗口；现已改为关闭钩子**纯同步、零磁盘 I/O**，盘符探测统一 1200ms 超时，`roots.json` 在「关闭全部便携实例」时清空。★ 2026-11-09 更正：这个「关闭钩子发完 shutdown-complete 却漏掉 process.exit()」是官方 host 的 bug，已在 DeepSeek Harness 0.2.2-rc.1 修复，本机隔夜常规升级已成功。升级到 0.2.2-rc.1 及以后，正常点「更新」即可，不再需要任何绕过操作。仅当仍卡在 0.2.1-rc.3 等旧版、无法先升级时，才用下面这条手动安装器的办法。
-  **仅旧版 0.2.1-rc.3 需要的兜底办法（0.2.2-rc.1 及以后不需要）**：任务管理器里**完全退出所有 `DeepSeek Harness.exe` 进程**（含主窗口、托盘、desktop host），再手动双击运行已下载好的安装器 `%LOCALAPPDATA%\@deepseek-aidsh-desktop-updater\pending\deepseek-harness-0.2.2-rc.1-win-x64.exe`（NSIS 安装器，可直接运行）。它不经过 host 的 10 秒优雅退出；装完确认 exe 版本已变即可，之后重开移动工作区、点「重新扫描」。（仅旧版需要；0.2.2-rc.1 及以后直接常规升级即可。）
-- **关于本机产物是否影响升级**：插件在本机生成的 `roots.json`（路径索引）、profile 里的 `link:` 软链接与 `dsh.profile.bundles` 条目、web 路由 / agent tool 注册都是静态数据，**不锁 `DeepSeek Harness.exe` / `app.asar`（锁来自运行中主 GUI / desktop host 自身），也不拖慢安装器替换文件**。软链是插件安装本体，删它等于卸载，不应删；唯一被采纳进「关闭全部便携实例」的清理项是清空 `roots.json`，升级后重新扫描即可。
-
-- **正常升级**：只换掉安装目录里的程序与内置 bundles；插件是软链接，profile 里那条 `link:` 记录还在，重启后自动加载，无需操作。
-- **便携实例会自动「跟上」新 DSH**：每次打开工作区都用本机**当前**的 `DeepSeek Harness.exe` + `cli.js` 启动，所以升级后下次打开，便携实例就跑在新版上。
-- **要重新验一次密码**：升级/重启 DSH 会清掉进程内的解锁状态（安全设计），重新输一次即可。
-- **兼容性 / 支持的 Harness 版本**：插件在 `package.json` 里声明 `dsh.engines.dsh >= 0.2.1-rc.5`（`>=` 无上限，覆盖 0.2.1-rc.5 及其后的 0.2.1 正式版、0.2.2-rc.1 与更后续的正式版 / 预发布版）；实测下限为 0.2.1-rc.5，更早的 0.2.1-rc.3 / 0.2.0 未做完整功能回归，不承诺可用。其余能力都通过公开 Service / `ctx` 取得，一般跨小版本可用。若升级后内部契约变化导致面板报错，把插件目录代码更新到适配版，再 `set_bundle false→true` 重载即可 —— 数据仍在盘上，不丢。
-- **版本差异导致的「隐藏插件」**：市场按新版 `engines.dsh` 重新过滤；升级到 ≥0.2.2-rc.1 后，原本被隐藏的 `dsh-web-all 0.4.15` 之类会重新出现。
-- **想让插件本体也升级**：把新版文件覆盖到原目录（保持路径不变）→ `set_bundle false→true` 重载（或重启 DSH）；换位置则重新 `install_bundle <新路径>`。整个过程**不需要动移动盘**。
-
-## 已知边界（实测结论，非缺陷）
-
-- **本机 DSH 必须存在**：插件只负责组织数据，运行仍依赖本机安装的 DSH（用其 CLI、随包 node/pnpm）。这是"只要安装了这个移动工作区插件"之外的隐含前提。
-- **本机唯一残留 = 一个索引文件** `~/.dsh/portable-workspace/roots.json`：只记录已知移动工作区根路径（用于拔盘后显示脱机、迁移后识别非盘符路径），不含会话/插件/工程/交付/日志。
-- **凭据**以明文 YAML 形式随盘携带，请保管好 U 盘；不想带账号就不要点「同步本机登录」。
-- **exFAT 无硬链接**：pnpm 只能复制文件，冷装一个带 170 个传递依赖的插件实测约 5 分钟；装过一次后 profile 的 node_modules 留在盘上，下次秒开。
-- **兼容性冲突是建议性的**：真正的版本红线由 DSH Loader 在启动时裁决，本插件只提前告知并给处理方案。
-- 物理拔插未做真实断电测试（用移除根标记模拟），跨电脑未做双机实测（只有一台机器）；其余 6 条需求均在 H: 真实 U 盘上全流程验证通过。
-
-## 交付内容
-
-```
-index.js           Host 半：路由、Agent 工具、工作区 CRUD/加载/迁移/密码/插件清单
-client.js          Client 半：侧栏图标 + 主页面 + 各对话框（React slot）
-lib/
-  asar.js          零依赖 asar 读取（Electron 内用 original-fs）
-  compatibility.js 零依赖 semver 子集 + 兼容性预检
-  constants.js     常量
-  credentials.js   单向账号同步
-  fsx.js           文件系统助手
-  launcher.js      便携实例进程管理
-  names.js         市场短名 → 完整包名解析、兼容版本挑选、404 提示
-  process.js       便携实例进程枚举 / 精确过滤 / 树杀（升级前释放文件锁）
-  profile.js       profile 脚手架 / 插件清单 / pnpm 安装 / 激活 bundles
-  sessions.js      会话日志 cwd 重写（迁移用）
-  volumes.js       盘符无关识别
-  workspace.js     工作区清单、密码、根标记、迁移、launch patch
-locale/{zh,en}.json、icon.svg、cordis.patch.yml、package.json
-scripts/           smoke / verify2 / launch-test / set-plugins（零 DSH 依赖验证脚本）
-docs/              移动工作区-图文教程.html（单文件、图片内嵌）+ images/（6 张实机截图）
-```
-
-`node --check` 全部通过；`plugin_manager list_plugins` 中 `include:portable-workspace` 为 `active`。
+★ 升级DeepSeek Harness前先点「关闭全部便携实例」，升级完成后点「重新扫描」即可。如果「关闭全部便携实例」后，自动升级DeepSeek Harness 失败，可能是DeepSeek Harness 某个版本缺陷 或其它插件占用，需退出完全退出DeepSeek Harness 后手动升级。

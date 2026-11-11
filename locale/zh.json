@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "移动工作区",
+    "title": "移动工作区（dsh-portable-workspace）",
     "description": "把一套完整的 DeepSeek Harness 工作状态放到移动硬盘或 U 盘上：会话、插件、工程文件、交付与日志全部随盘走，不落本地。"
   },
   "panel": {

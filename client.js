@@ -165,6 +165,8 @@ window.__ModuleLoader__.load({
       'panel.sessionMove': '迁移后从来源删除（移动而非复制）',
       'panel.sessionMigrateGo': '开始迁移',
       'panel.sessionMigrated': '已迁移 {count} 个会话',
+      'panel.sessionMigratedDetail': '已迁移 {count} 个会话：工程/交付文件 {files} 个、附件 {attachments} 个，正文中 {paths} 处旧路径已改写为新目录。',
+      'panel.sessionMigrateRebase': '工程文件、交付物与附件会一起复制；会话正文里的旧绝对路径会改写为新目录，换电脑后仍能定位。',
       'panel.backup': '备份与恢复',
       'panel.backupTitle': '备份与恢复',
       'panel.backupNow': '立即备份',
@@ -352,6 +354,8 @@ window.__ModuleLoader__.load({
       'panel.sessionMove': 'Delete from source after migrating (move, not copy)',
       'panel.sessionMigrateGo': 'Migrate selected',
       'panel.sessionMigrated': 'Migrated {count} session(s)',
+      'panel.sessionMigratedDetail': 'Migrated {count} session(s): {files} project/deliverable files, {attachments} attachments, {paths} stale paths rewritten to the new folder.',
+      'panel.sessionMigrateRebase': 'Project files, deliverables and attachments are copied along; stale absolute paths inside the session are rewritten to the new folder, so they still resolve on another computer.',
       'panel.backup': 'Backup & restore',
       'panel.backupTitle': 'Backup & restore',
       'panel.backupNow': 'Back up now',
@@ -2637,7 +2641,12 @@ window.__ModuleLoader__.load({
         setBusy(true); setErr('')
         try {
           const r = await request('/sessions/migrate', { source: sourceSpec, target: dest.spec, sessionIds: selected, move, password: accessPassword })
-          await onDone(t('panel.sessionMigrated', { count: r.moved }).replace('{count}', String(r.moved)))
+          const detail = t('panel.sessionMigratedDetail')
+            .replace('{count}', String(r.moved ?? 0))
+            .replace('{files}', String(r.projectFiles ?? 0))
+            .replace('{attachments}', String(r.attachmentFiles ?? 0))
+            .replace('{paths}', String(r.rebased ?? 0))
+          await onDone(detail)
         } catch (e) { setErr(errorMessageOf(e, t)) }
         finally { setBusy(false) }
       }
@@ -2662,6 +2671,7 @@ window.__ModuleLoader__.load({
         ],
       },
         h('div', { style: { fontSize: 12, color: T.labelSecondary } }, t('panel.sessionMigrateBody')),
+        h('div', { style: { fontSize: 12, color: T.labelTertiary, lineHeight: '18px' } }, t('panel.sessionMigrateRebase')),
         h('div', { style: { fontSize: 12, color: T.labelSecondary } }, t('panel.sessionFrom')),
         h('div', { style: { display: 'flex', gap: 6 } },
           h(Button, { kind: sourceKind === 'workspace' ? 'primary' : 'default', onClick: () => setSourceKind('workspace') }, t('panel.thisWorkspace')),

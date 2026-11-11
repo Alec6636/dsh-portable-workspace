@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Portable Workspace",
+    "title": "Portable Workspace (dsh-portable-workspace)",
     "description": "Create and open a complete DeepSeek Harness working state on a removable or secondary disk, so sessions, plugins, project files, deliverables and logs all travel with the drive."
   },
   "panel": {
