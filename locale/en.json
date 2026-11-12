@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Portable Workspace (dsh-portable-workspace)",
-    "description": "Create and open a complete DeepSeek Harness working state on a removable or secondary disk, so sessions, plugins, project files, deliverables and logs all travel with the drive."
+    "description": "Portable Workspace: keep your DSH sessions, plugins, projects and deliverables entirely on a removable drive or USB stick and continue on another computer. (1) Fully self-contained, nothing left on the local disk - sessions, plugins, projects and logs all live on the drive, so you can work portably across computers and OS reinstalls. (2) An independent portable web instance per workspace; run several instances, each with its own plugin setup. (3) Drive-letter-independent detection with offline support. (4) scrypt password plus a one-time recovery key, a password hint, and password verification before any view that exposes session titles. (5) One-click install of missing plugins, short-name resolution, compatibility precheck, and reinstall from the workspace plugin list. (6) Two-way session migration between drives and to or from the local machine, .zip backup and restore, and workspace renaming. (7) Upgrade-friendly, zero runtime dependencies, works offline. (8) Optional \"sync local login\"."
   },
   "panel": {
     "title": "Portable Workspace",
