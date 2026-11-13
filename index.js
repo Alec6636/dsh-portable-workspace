@@ -11,6 +11,7 @@
 
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
 
 import {
   DELETE_CONFIRM_PHRASES,
@@ -82,6 +83,268 @@ import {
 
 export const name = 'dsh-portable-workspace'
 export const inject = ['tools']
+
+/* -------------------------------------------------------------------------- */
+/* Auth-cookie hygiene (prevents Chromium 431 "Request Header Fields Too Large")*/
+/* -------------------------------------------------------------------------- */
+/*
+ * DSH's core BrowserAuth mints a host-only, HttpOnly
+ * `dsh-auth-<sha256(authority)>` cookie for EVERY loopback authority it serves
+ * (`http://127.0.0.1:<port>`), with a 7-day Max-Age and Path=/. It never
+ * revokes them. Portable instances launch with `--port 0` (a fresh random port
+ * each time), so every open leaves another cookie behind in the shared
+ * 127.0.0.1 jar. Once ~70 accumulate the request Cookie header exceeds Node's
+ * 16KB limit and the whole app 431s.
+ *
+ * Chromium scopes cookies by (name, domain, path) -- NOT by port (RFC 6265). So
+ * a `Set-Cookie: <name>=; Max-Age=0; Path=/` returned from ANY 127.0.0.1 port
+ * deletes a cookie minted on another port. We verified this end-to-end with the
+ * browser: a fetch() response carrying such a header clears HttpOnly cookies.
+ *
+ * This is PREVENTIVE: once 431 is already happening, every request to
+ * 127.0.0.1 carries the oversized header and Node rejects it before any handler
+ * runs, so the plugin cannot self-heal that state. Instead of a periodic sweep
+ * (which wastes port probes), we sweep on exactly two events:
+ *   (1) a NEW portable instance is spawned -- a fresh `--port 0` authority is
+ *       about to add one more cookie, so we reap the stale ones right then;
+ *   (2) the FIRST plugin route request after each DSH restart. `apply()` has
+ *       no req/res and cannot emit Set-Cookie, so this first browser request
+ *       (normally the panel's initial /state) is the earliest possible moment;
+ *       the module-level boot flag resets on every Host restart, so this fires
+ *       exactly once per restart.
+ * The root cause (core never revoking) is upstream -- see the delivery report.
+ */
+
+const AUTH_COOKIE_PREFIX = 'dsh-auth-'
+/** Keep at most this many live auth cookies; 24 x ~230B is far below 16KB. */
+const MAX_AUTH_COOKIES = 24
+/** Align with the core's 7-day Max-Age. */
+const AUTH_COOKIE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const AUTH_PROBE_TIMEOUT_MS = 900
+const MAX_AUTH_DELETIONS_PER_RESPONSE = 80
+
+/** Mirror of the core's `cookieName(authority)` (verified byte-for-byte). */
+function authCookieNameFor(authority) {
+  return AUTH_COOKIE_PREFIX + createHash('sha256').update(String(authority)).digest('base64url')
+}
+
+/** Decode the readable `vN.<base64url(JSON)>.<sig>` payload (no secret needed). */
+function decodeAuthCookie(value) {
+  const parts = String(value ?? '').split('.')
+  if (parts.length < 3 || !/^v\d+$/u.test(parts[0])) return undefined
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    return payload && typeof payload === 'object' ? payload : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Parse just the `dsh-auth-*` pairs out of a Cookie request header. */
+function parseAuthCookies(headerValue) {
+  const out = []
+  for (const raw of String(headerValue ?? '').split(';')) {
+    const pair = raw.trim()
+    const eq = pair.indexOf('=')
+    if (eq < 0) continue
+    const name = pair.slice(0, eq).trim()
+    if (!name.startsWith(AUTH_COOKIE_PREFIX)) continue
+    const value = pair.slice(eq + 1).trim()
+    const payload = decodeAuthCookie(value)
+    out.push({
+      name,
+      value,
+      payload,
+      authority: typeof payload?.authority === 'string' ? payload.authority : '',
+    })
+  }
+  return out
+}
+
+/** Deletion header: host-only (no Domain), Path=/ -- matches the core's cookie. */
+function authDeletionHeader(name) {
+  return `${name}=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Strict`
+}
+
+/** Turn an authority (host:port, or https://origin) into a probe URL. */
+function authorityProbeUrl(authority) {
+  const a = String(authority ?? '')
+  if (/^https?:\/\//iu.test(a)) return a.replace(/\/+$/u, '') + '/'
+  return 'http://' + a + '/'
+}
+
+/** An authority is "in use" while its port answers (any status, even 401). */
+async function authAuthorityAlive(authority) {
+  try {
+    const response = await fetch(authorityProbeUrl(authority), {
+      method: 'GET',
+      signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+    })
+    return response.status > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Names that must NEVER be deleted: the cookie for the request we are serving,
+ * plus auth cookies of portable instances our own runtime records say are up.
+ * (That second group is the "long-running workspace" to protect.)
+ */
+async function collectActiveAuthNames(req, settings) {
+  const names = new Set()
+  const host = String(req?.headers?.host ?? '').trim()
+  if (host) {
+    names.add(authCookieNameFor(host))
+    names.add(authCookieNameFor('https://' + host))
+  }
+  try {
+    const { pidList } = await readRuntimeAll(settings)
+    await Promise.all(pidList.map(async (runtime) => {
+      const url = runtime?.url
+      if (typeof url !== 'string' || url === '') return
+      let authority
+      try { authority = new URL(url).host } catch { return }
+      if (!authority) return
+      const up = (typeof runtime.pid === 'number' && isAlive(runtime.pid)) ||
+        await probeUrl(url).catch(() => false)
+      if (!up) return
+      names.add(authCookieNameFor(authority))
+      names.add(authCookieNameFor('https://' + authority))
+    }))
+  } catch {
+    // Enumeration is best-effort; the port probe is the primary alive signal.
+  }
+  return names
+}
+
+/** Append Set-Cookie deletion headers without clobbering any existing ones. */
+function appendDeletionHeaders(res, headers) {
+  if (headers.length === 0 || typeof res?.setHeader !== 'function') return
+  const existing = typeof res.getHeader === 'function' ? res.getHeader('set-cookie') : undefined
+  const base = existing === undefined || existing === null
+    ? []
+    : (Array.isArray(existing) ? existing.map(String) : [String(existing)])
+  res.setHeader('set-cookie', [...base, ...headers])
+}
+
+/** Pure classification (no I/O) -- deterministic unit tests target this. */
+function classifyAuthCookies(entries, opts) {
+  const {
+    now = Date.now(),
+    activeNames = new Set(),
+    aliveMap = new Map(),
+    max = MAX_AUTH_COOKIES,
+  } = opts ?? {}
+  const classified = entries.map((entry) => {
+    const p = entry.payload
+    const expired = p === undefined
+      || (typeof p.expiresAt === 'number' && p.expiresAt <= now)
+      || (typeof p.issuedAt === 'number' && p.issuedAt + AUTH_COOKIE_TTL_MS <= now)
+    const isProtected = activeNames.has(entry.name)
+    const isAlivePort = entry.authority ? aliveMap.get(entry.authority) === true : false
+    const issuedAt = typeof p?.issuedAt === 'number' ? p.issuedAt : 0
+    return { ...entry, expired, isProtected, isAlivePort, issuedAt }
+  })
+
+  const deletions = []
+  let kept = []
+  for (const c of classified) {
+    if (c.isProtected) { kept.push(c); continue }
+    if (c.expired || !c.isAlivePort) { deletions.push(c); continue }
+    kept.push(c)
+  }
+
+  let capExceeded = false
+  if (kept.length > max) {
+    // Drop the oldest non-protected cookies first; never touch a known-running
+    // instance or the current session even when the cap is blown.
+    const droppable = kept
+      .filter((c) => !c.isProtected)
+      .sort((a, b) => a.issuedAt - b.issuedAt)
+    const removeNames = new Set(droppable.slice(0, kept.length - max).map((c) => c.name))
+    if (removeNames.size > 0) {
+      deletions.push(...kept.filter((c) => removeNames.has(c.name)))
+      kept = kept.filter((c) => !removeNames.has(c.name))
+    }
+    capExceeded = kept.length > max
+  }
+
+  return { classified, deletions, kept, capExceeded }
+}
+
+/** Prune stale auth cookies for this request. I/O overridable via `opts`. */
+async function pruneAuthCookies(req, res, settings, opts = {}) {
+  const entries = parseAuthCookies(req?.headers?.cookie)
+  const now = opts.now ?? Date.now()
+  const activeNames = opts.activeNames ?? await collectActiveAuthNames(req, settings)
+
+  const authorities = [...new Set(entries.map((e) => e.authority).filter(Boolean))]
+  let aliveMap = opts.aliveMap
+  if (aliveMap === undefined) {
+    aliveMap = new Map()
+    await Promise.all(authorities.map(async (a) => {
+      aliveMap.set(a, await authAuthorityAlive(a))
+    }))
+  }
+
+  const { deletions, kept, capExceeded, classified } =
+    classifyAuthCookies(entries, { now, activeNames, aliveMap })
+
+  const headers = deletions
+    .slice(0, MAX_AUTH_DELETIONS_PER_RESPONSE)
+    .map((c) => authDeletionHeader(c.name))
+  appendDeletionHeaders(res, headers)
+
+  return {
+    ok: true,
+    seen: entries.length,
+    deleted: headers.length,
+    kept: kept.length,
+    protectedCount: classified.filter((c) => c.isProtected).length,
+    capExceeded,
+    max: MAX_AUTH_COOKIES,
+    ttlMs: AUTH_COOKIE_TTL_MS,
+  }
+}
+
+/*
+ * Event-driven trigger state. Both variables are module-level, so the Host
+ * re-importing this plugin (every DSH restart / bundle reload) resets them.
+ * `bootPruneDone` is what guarantees exactly ONE forced sweep per restart.
+ */
+let bootPruneDone = false
+let lastCookiePrune
+
+/**
+ * Does this launch result mean a brand-new `--port 0` authority was created?
+ * `launched` / `launching` both come from `startPortable()` having spawned a
+ * fresh detached instance; `running` means `prepareOpen()` found the old URL
+ * still answering and reused it, so NO new port (and no new cookie) exists.
+ */
+function launchStageCreatesNewPort(stage) {
+  return stage === 'launched' || stage === 'launching'
+}
+
+/** Run one forced, exception-proof sweep and remember its summary. */
+async function forcePruneAuthCookies(req, res, settings, opts = {}) {
+  bootPruneDone = true
+  let summary
+  try {
+    summary = await pruneAuthCookies(req, res, settings, opts)
+  } catch (error) {
+    // Cookie hygiene must never break the panel.
+    summary = { ok: false, error: String(error?.message ?? error) }
+  }
+  lastCookiePrune = summary
+  return summary
+}
+
+/** Test-only hook: simulate a fresh Host restart without reloading the module. */
+function resetAuthPruneBootState() {
+  bootPruneDone = false
+  lastCookiePrune = undefined
+}
 
 /* -------------------------------------------------------------------------- */
 /* Upgrade awareness                                                          */
@@ -814,7 +1077,7 @@ function optionalField(body, field) {
  *
  * @returns `{ handled: false }` when the path is not ours.
  */
-async function dispatch(ctx, settings, connection, req, res) {
+export async function dispatch(ctx, settings, connection, req, res, opts = {}) {
   const rejection = typeof connection?.requestRejection === 'function'
     ? connection.requestRejection(req)
     : undefined
@@ -830,8 +1093,24 @@ async function dispatch(ctx, settings, connection, req, res) {
   const route = path.slice(ROUTE_PREFIX.length).replace(/\/+$/, '') || '/'
   const method = String(req.method ?? 'GET').toUpperCase()
 
+  // Event-driven preventive sweep -- NO periodic / 60s polling.
+  // Trigger 1 (boot): the FIRST plugin route request after this Host started.
+  //   `bootPruneDone` is module-level, so every DSH restart resets it and the
+  //   first request (normally the panel's initial /state) sweeps exactly once.
+  //   `apply()` itself has no req/res and cannot emit Set-Cookie, so this is the
+  //   earliest possible moment; the browser sends the whole dsh-auth-* jar here.
+  // Trigger 2 (new port): handled in /open after a fresh instance is spawned.
+  let sweptThisRequest = false
+  let cookiePrune
+  if (!bootPruneDone) {
+    cookiePrune = await forcePruneAuthCookies(req, res, settings, opts)
+    sweptThisRequest = true
+  }
+
   if (method === 'GET' && route === '/state') {
-    sendJson(res, 200, await collectState(ctx, settings))
+    const state = await collectState(ctx, settings)
+    state.cookiePrune = cookiePrune ?? lastCookiePrune
+    sendJson(res, 200, state)
     return { handled: true }
   }
 
@@ -853,7 +1132,9 @@ async function dispatch(ctx, settings, connection, req, res) {
 
   switch (route) {
     case '/scan': {
-      sendJson(res, 200, await collectState(ctx, settings))
+      const state = await collectState(ctx, settings)
+      state.cookiePrune = cookiePrune ?? lastCookiePrune
+      sendJson(res, 200, state)
       return { handled: true }
     }
 
@@ -929,13 +1210,26 @@ async function dispatch(ctx, settings, connection, req, res) {
     case '/open': {
       const root = requireField(body, 'root')
       const id = requireField(body, 'id')
-      const launched = await launchWorkspace(ctx, settings, {
-        root,
-        id,
-        password: optionalField(body, 'password') ?? '',
-        host: optionalField(body, 'host'),
-        skipMissingPlugins: body.skipMissingPlugins === true,
-      })
+      // `opts.launchResult` is a TEST-ONLY injection seam: when present it
+      // stands in for the real detached launch so the new-port gating can be
+      // verified end-to-end. Production paths always use launchWorkspace().
+      const launched = opts.launchResult !== undefined
+        ? opts.launchResult
+        : await launchWorkspace(ctx, settings, {
+          root,
+          id,
+          password: optionalField(body, 'password') ?? '',
+          host: optionalField(body, 'host'),
+          skipMissingPlugins: body.skipMissingPlugins === true,
+        })
+      // A fresh instance was spawned with `--port 0`, i.e. a brand-new
+      // authority (and therefore a new auth cookie) is about to appear.
+      // Sweep the stale cookies ONCE, riding on this same response's
+      // Set-Cookie headers. `running` reuses the old port -> no sweep.
+      const newPortGenerated = launchStageCreatesNewPort(launched?.stage)
+      if (newPortGenerated && !sweptThisRequest) {
+        launched.cookiePrune = await forcePruneAuthCookies(req, res, settings, opts)
+      }
       if (launched && (launched.stage === 'launched' || launched.stage === 'launching' || launched.stage === 'running')) void maybeAutoBackup(root, id).catch(() => undefined)
       sendJson(res, 200, launched)
       return { handled: true }
@@ -1771,3 +2065,19 @@ export function apply(ctx, config) {
 
 export { NS, PROFILE_NAME, ROUTE_PREFIX, VENDORED_PLUGIN_DIR, hashPassword }
 export { dirname, exists, isDirectory }
+export {
+  AUTH_COOKIE_PREFIX,
+  MAX_AUTH_COOKIES,
+  AUTH_COOKIE_TTL_MS,
+  authCookieNameFor,
+  decodeAuthCookie,
+  parseAuthCookies,
+  authDeletionHeader,
+  authorityProbeUrl,
+  authAuthorityAlive,
+  classifyAuthCookies,
+  pruneAuthCookies,
+  forcePruneAuthCookies,
+  resetAuthPruneBootState,
+  launchStageCreatesNewPort,
+}
